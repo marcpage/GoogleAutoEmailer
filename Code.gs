@@ -16,46 +16,71 @@ var OptOutLinkStyle = "color:gray";
 var RecipientsPattern = /\bTo:\s*([^<\r\n]+)/;
 var SendDatePattern = /\bDate: (([0-9][0-9][0-9][0-9])\/([0-9][0-9])\/([0-9][0-9]))/;
 
-function getPeopleWithTag(tagName) {
-  var group  = ContactsApp.getContactGroup(tagName);
-  var peopleId_Info = {};
+function getEveryGroup() {
+  var groups = People.ContactGroups.list();
+  var group_mappings = {};
 
-  if (group) {
-    var taggedPeople = group.getContacts();
+  // TODO: Use pageToken and nextPageToken for more than 100 groups
+  for (var group_index = 0; group_index < groups.contactGroups.length; ++group_index) {
+    group = groups.contactGroups[group_index];
+    group_mappings[group.resourceName] = group.name;
+  }
+  return group_mappings;
+}
 
-    for (var personIndex = 0; personIndex < taggedPeople.length; ++personIndex) {
-      var person = taggedPeople[personIndex];
-      var extras;
-      
-      try {
-        extras = person.getNotes().match(/\b(\S+):\s*([^<\r\n]+)/g);
-      } catch(err) {
-        extras = null;
+function getEveryone() {
+  var groups = getEveryGroup();
+  var fields = {"personFields": "names,emailAddresses,memberships,biographies"};
+  var everyone = {};
+  var people; 
+
+  do {
+    people = People.People.Connections.list("people/me", fields);
+    for (var person_index=0; person_index < people.connections.length; ++person_index) {
+      person = people.connections[person_index];
+      emails = person.emailAddresses 
+                ? person.emailAddresses.map(function (address) {return address.value}) 
+                : [];
+      membership = person.memberships 
+                ? person.memberships.map(function (group) {return groups[group.contactGroupMembership.contactGroupResourceName]}) 
+                : []
+      everyone[person.resourceName] = {
+          "first": person.names[0].givenName,
+          "last": person.names[0].familyName,
+          "emails": emails,
+          "groups": membership,
       }
-      try {
-        peopleId_Info[person.getId()] = {
-          "first": person.getGivenName(),
-          "last": person.getFamilyName(),
-          "emails": person.getEmailAddresses()
-        };
-        if (extras) {
-          for (var variable_index = 0; variable_index < extras.length; ++variable_index) {
-            var key_value = extras[variable_index].match(/\b(\S+):\s*([^<\r\n]+)/);
-            peopleId_Info[person.getId()][key_value[1]] = key_value[2];
-          }
+
+      for (var biography_index = 0; biography_index < (person.biographies ? person.biographies.length : 0); ++ biography_index) {
+        extras = person.biographies[biography_index].value.match(/\b(\S+):\s*([^<\r\n]+)/g);
+
+        for (var variable_index = 0; variable_index < (extras ? extras.length : 0); ++variable_index) {
+          var key_value = extras[variable_index].match(/\b(\S+):\s*([^<\r\n]+)/);
+
+          everyone[person.resourceName][key_value[1]] = key_value[2];
+          //console.log(everyone[person.resourceName]);
         }
-      } catch(err) {
-        console.log(err);
-      }
-    }
-  }
-  var peopleInfo = [];
 
-  for (var personId in peopleId_Info) {
-    peopleInfo.push(peopleId_Info[personId]);
-  }
-  
-  return peopleInfo;
+      }
+
+    }
+    fields.pageToken = people.nextPageToken;
+  } while(people.nextPageToken);
+
+  return everyone;
+}
+
+function test_getPeopleWithTag() {
+  var all_contacts = getEveryone();
+  var people = getPeopleWithTag("Coaching Clients", all_contacts);
+
+  console.log(people);
+}
+function getPeopleWithTag(tagName, all_contacts) {
+  var contact_ids = Object.keys(all_contacts);
+  var people = contact_ids.map(function(person_id) {return all_contacts[person_id]});
+
+  return people.filter(function(person) {return person.groups.includes(tagName)});
 }
 
 function getDateString() {
@@ -146,11 +171,16 @@ function automatedEmailsAvailable(sheet, optOutSheet, emails) {
   return emails.filter(function(e) {return notAvailable.indexOf(e) < 0 && optOutList.indexOf(e) < 0;})
 }
 
-function getEmailList(recipients) {
+function test_getEmailList() {
+  var list = getEmailList(['Coaching Clients'], getEveryone());
+  console.log(list);
+}
+
+function getEmailList(recipients, all_contacts) {
   var emails = [];
 
   for (var recipientIndex = 0; recipientIndex < recipients.length; ++recipientIndex) {
-    var people = getPeopleWithTag(recipients[recipientIndex].replace(/^\s+|\s+$/g, ''));
+    var people = getPeopleWithTag(recipients[recipientIndex].replace(/^\s+|\s+$/g, ''), all_contacts);
     
     Array.prototype.push.apply(emails, people);
   }
@@ -268,7 +298,8 @@ function afterDate(year, month, day) {
 
 function handleEmails() {
   var drafts = GmailApp.getDraftMessages();
-
+  var all_contacts = getEveryone();
+  
   for (var draftIndex = 0; draftIndex < drafts.length; ++draftIndex) {
     var draft = drafts[draftIndex];
     var hasRecipients = draft.getBody().match(RecipientsPattern);
@@ -281,7 +312,7 @@ function handleEmails() {
     }
 
     if (hasRecipients) {
-      var recipients = getEmailList(hasRecipients[1].split(','));
+      var recipients = getEmailList(hasRecipients[1].split(','), all_contacts);
       var trackingSheet = getAutomatedEmailTracker(draft.getId(), draft.getSubject());
 
       for (var recipientIndex = 0; recipientIndex < recipients.length; ++recipientIndex) {
@@ -289,9 +320,4 @@ function handleEmails() {
       }
     }
   }
-}
-
-function test_getPeopleWithTag() {
-  var people = getPeopleWithTag("Business Interviews");
-  console.log(people);
 }
