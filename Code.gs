@@ -298,7 +298,6 @@ function afterDate(year, month, day) {
 
 function handleEmails() {
   var drafts = GmailApp.getDraftMessages();
-  var all_contacts = getEveryone();
   
   for (var draftIndex = 0; draftIndex < drafts.length; ++draftIndex) {
     var draft = drafts[draftIndex];
@@ -312,6 +311,7 @@ function handleEmails() {
     }
 
     if (hasRecipients) {
+      var all_contacts = getEveryone();
       var recipients = getEmailList(hasRecipients[1].split(','), all_contacts);
       var trackingSheet = getAutomatedEmailTracker(draft.getId(), draft.getSubject());
 
